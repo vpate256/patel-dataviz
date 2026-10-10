@@ -1,0 +1,368 @@
+---
+title: "Cannabis Use Across Age Groups in Canada"
+subtitle: "2025 Canadian Substance Use Survey"
+format:
+  html:
+    toc: true
+    code-fold: true
+    self-contained: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+
+library(tidyverse)
+library(scales)
+library(plotly)
+
+csus <- read_csv("csus2025_pumf_final.csv", show_col_types = FALSE)
+
+age_levels <- c("15–24", "25–34", "35–44", "45–54", "55–64", "65+")
+
+dat <- csus |>
+  mutate(
+    age_group = case_when(
+      AGS_Q01P == 1 ~ "15–24",
+      AGS_Q01P == 2 ~ "25–34",
+      AGS_Q01P == 3 ~ "35–44",
+      AGS_Q01P == 4 ~ "45–54",
+      AGS_Q01P == 5 ~ "55–64",
+      AGS_Q01P == 6 ~ "65+",
+      TRUE ~ NA_character_
+    ),
+    age_group = factor(age_group, levels = age_levels),
+
+    # CAN_Q03 asks about cannabis use in the past 12 months only among
+    # people who have ever used cannabis. A valid skip (-7) therefore
+    # represents people outside that universe (e.g., never users), who
+    # are coded as 0 for population-level past-year prevalence.
+    past_year_cannabis = case_when(
+      CAN_Q03 %in% c(1, 2, 3) ~ 1,
+      CAN_Q03 %in% c(4, -7) ~ 0,
+      TRUE ~ NA_real_
+    )
+  ) |>
+  filter(!is.na(age_group))
+
+weighted_percent <- function(x, w) {
+  weighted.mean(x, w, na.rm = TRUE) * 100
+}
+
+# Figure 1 data: past-year cannabis use in the full population
+past_year_by_age <- dat |>
+  group_by(age_group) |>
+  summarise(
+    n = sum(!is.na(past_year_cannabis)),
+    percent = weighted_percent(past_year_cannabis, WGT_PUMF),
+    .groups = "drop"
+  )
+
+# Figure 2 data: daily/almost-daily use among past-year cannabis users
+daily_by_age <- dat |>
+  filter(
+    CAN_Q03 %in% c(1, 2, 3),
+    NV_CAN_Q05 %in% 1:6
+  ) |>
+  mutate(
+    daily_or_almost_daily = if_else(NV_CAN_Q05 == 1, 1, 0)
+  ) |>
+  group_by(age_group) |>
+  summarise(
+    n = n(),
+    percent = weighted_percent(daily_or_almost_daily, WGT_PUMF),
+    .groups = "drop"
+  )
+
+# Figure 3 data: overlapping alcohol/cannabis use among people who
+# used both substances in the past 12 months.
+# PSU_Q02_a:
+# 1 = yes, past 30 days
+# 2 = yes, but not past 30 days
+# 3 = no
+overlap_by_age <- dat |>
+  filter(PSU_Q02_a %in% c(1, 2, 3)) |>
+  mutate(
+    overlapping_alcohol_cannabis = if_else(PSU_Q02_a %in% c(1, 2), 1, 0)
+  ) |>
+  group_by(age_group) |>
+  summarise(
+    n = n(),
+    percent = weighted_percent(overlapping_alcohol_cannabis, WGT_PUMF),
+    .groups = "drop"
+  )
+```
+
+# Story Summary
+
+Cannabis use in Canada is often described as especially common among younger people, but age differences may depend on what aspect of use is being considered. Using the 2025 Canadian Substance Use Survey, this story compares three related behaviours across age groups: any cannabis use in the past year, daily or almost-daily use among people who used cannabis in the past year, and overlapping alcohol–cannabis use among people who used both substances.
+
+The first figure shows a clear age gradient in past-year cannabis use. Weighted prevalence is about 45% among people aged 15–24 and 25–34, then declines steadily to about 17% among adults aged 65 and older. However, the second figure complicates this pattern. Among people who used cannabis in the past year, the proportion using it daily or almost daily changes much less across age groups, remaining roughly one-quarter across the age range.
+
+The strongest age difference appears for overlapping alcohol and cannabis use. Among people who used both substances, about 69% of those aged 15–24 reported using them close enough together for their effects to overlap, compared with about 32% of adults aged 65 and older. Age therefore appears more strongly related to whether cannabis is used, and whether it is combined with alcohol, than to daily use among cannabis users.
+
+# Version A: Scientific Article
+
+## Past-year cannabis use decreases with age
+
+The first analysis estimates the weighted percentage of respondents in each age group who reported cannabis use in the past 12 months. The survey weight (`WGT_PUMF`) is used for all point estimates.
+
+```{r}
+#| label: fig-science-past-year
+#| fig-cap: "Weighted prevalence of cannabis use in the past 12 months by age group. Numbers under age groups are unweighted valid sample sizes."
+
+science_p1 <- past_year_by_age |>
+  mutate(age_n = paste0(age_group, "\n(n = ", comma(n), ")")) |>
+  ggplot(aes(x = age_n, y = percent)) +
+  geom_col(fill = "grey45", width = 0.72) +
+  geom_text(
+    aes(label = sprintf("%.1f%%", percent)),
+    vjust = -0.35,
+    size = 3.5
+  ) +
+  scale_y_continuous(
+    limits = c(0, 50),
+    breaks = seq(0, 50, 10),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    x = "Age group",
+    y = "Weighted percentage",
+    title = "Past-year cannabis use declines across older age groups"
+  ) +
+  theme_classic(base_size = 12)
+
+science_p1
+```
+
+Past-year cannabis use is highest among respondents aged 15–24 (44.6%) and 25–34 (44.2%). Prevalence then declines across each older age group, reaching 16.7% among adults aged 65 and older.
+
+## Daily use among cannabis users is comparatively stable
+
+The second analysis changes the denominator. Rather than asking who used cannabis at all, it examines only respondents who reported cannabis use in the past 12 months and asks what proportion used cannabis every day or almost every day.
+
+```{r}
+#| label: fig-science-daily
+#| fig-cap: "Weighted percentage reporting daily or almost-daily cannabis use among respondents who used cannabis in the past 12 months. Numbers under age groups are unweighted eligible sample sizes."
+
+science_p2 <- daily_by_age |>
+  mutate(age_n = paste0(age_group, "\n(n = ", comma(n), ")")) |>
+  ggplot(aes(x = age_n, y = percent, group = 1)) +
+  geom_line(linewidth = 0.7, linetype = "solid") +
+  geom_point(size = 2.5, shape = 21, fill = "white") +
+  geom_text(
+    aes(label = sprintf("%.1f%%", percent)),
+    vjust = -0.8,
+    size = 3.3
+  ) +
+  scale_y_continuous(
+    limits = c(0, 35),
+    breaks = seq(0, 35, 5),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    x = "Age group",
+    y = "Weighted percentage",
+    title = "Daily or almost-daily use varies less by age",
+    subtitle = "Among past-year cannabis users"
+  ) +
+  theme_classic(base_size = 12)
+
+science_p2
+```
+
+The age gradient is much smaller once the analysis is restricted to cannabis users. Daily or almost-daily use ranges from 28.8% among 15–24-year-old users to 24.1% among users aged 65 and older. This suggests that age differences in cannabis involvement are driven more strongly by the likelihood of using cannabis at all than by daily use among people who already use it.
+
+## Overlapping alcohol and cannabis use shows a stronger age gradient
+
+The final analysis examines respondents who used both alcohol and cannabis in the past 12 months. It estimates the percentage who reported using the two substances at the same time, or close enough together for their effects to overlap.
+
+```{r}
+#| label: fig-science-overlap
+#| fig-cap: "Weighted percentage reporting overlapping alcohol and cannabis use among respondents who used both substances in the past 12 months. Numbers under age groups are unweighted eligible sample sizes."
+
+science_p3 <- overlap_by_age |>
+  mutate(age_n = paste0(age_group, "\n(n = ", comma(n), ")")) |>
+  ggplot(aes(x = percent, y = fct_rev(age_n))) +
+  geom_segment(
+    aes(x = 0, xend = percent, yend = fct_rev(age_n)),
+    linewidth = 0.6
+  ) +
+  geom_point(size = 2.7, shape = 21, fill = "white") +
+  geom_text(
+    aes(label = sprintf("%.1f%%", percent)),
+    hjust = -0.25,
+    size = 3.3
+  ) +
+  scale_x_continuous(
+    limits = c(0, 75),
+    breaks = seq(0, 70, 10),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    x = "Weighted percentage",
+    y = "Age group",
+    title = "Overlapping alcohol and cannabis use falls sharply with age",
+    subtitle = "Among respondents who used both substances in the past 12 months"
+  ) +
+  theme_classic(base_size = 12)
+
+science_p3
+```
+
+Overlapping use declines from 69.0% among 15–24-year-old dual users to 31.6% among dual users aged 65 and older. Compared with the relatively modest age differences in daily cannabis use among users, this pattern suggests that age is especially relevant to the context in which cannabis is used, including whether it is combined with alcohol.
+
+# Version B: Accessible / Dynamic Outlet
+
+## Cannabis use is common among younger Canadians, then falls with age
+
+The overall pattern is striking: cannabis use in the past year is common among people under 35, but becomes progressively less common in older age groups. Hover over the bars to see the weighted estimate and sample size.
+
+```{r}
+#| label: fig-web-past-year
+
+web_p1_base <- past_year_by_age |>
+  mutate(
+    tooltip = paste0(
+      "<b>Age ", age_group, "</b><br>",
+      "Past-year cannabis use: ", sprintf("%.1f%%", percent), "<br>",
+      "Unweighted n: ", comma(n)
+    )
+  ) |>
+  ggplot(aes(
+    x = age_group,
+    y = percent,
+    text = tooltip
+  )) +
+  geom_col(aes(fill = percent), width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = sprintf("%.0f%%", percent)),
+    vjust = -0.4,
+    size = 4
+  ) +
+  scale_y_continuous(
+    limits = c(0, 50),
+    labels = label_percent(scale = 1)
+  ) +
+  scale_fill_viridis_c(option = "C", direction = -1) +
+  labs(
+    x = NULL,
+    y = "Percent",
+    title = "Cannabis use drops steadily after age 35",
+    subtitle = "Share of Canadians reporting cannabis use in the past 12 months"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.x = element_blank())
+
+ggplotly(web_p1_base, tooltip = "text") |>
+  config(displayModeBar = FALSE)
+```
+
+At first glance, this could make cannabis use look primarily like a younger-person behaviour. But the next figure changes the question from **“Who uses cannabis?”** to **“Among people who use it, how often do they use it?”**
+
+## Among cannabis users, daily use looks much more similar across ages
+
+```{r}
+#| label: fig-web-daily
+
+web_p2_base <- daily_by_age |>
+  mutate(
+    tooltip = paste0(
+      "<b>Age ", age_group, "</b><br>",
+      "Daily/almost-daily use: ", sprintf("%.1f%%", percent), "<br>",
+      "Past-year cannabis users, n = ", comma(n)
+    )
+  ) |>
+  ggplot(aes(
+    x = age_group,
+    y = percent,
+    group = 1,
+    text = tooltip
+  )) +
+  geom_line(linewidth = 1) +
+  geom_point(aes(fill = percent), size = 4, shape = 21, show.legend = FALSE) +
+  geom_text(
+    aes(label = sprintf("%.0f%%", percent)),
+    vjust = -1,
+    size = 4
+  ) +
+  scale_y_continuous(
+    limits = c(0, 35),
+    labels = label_percent(scale = 1)
+  ) +
+  scale_fill_viridis_c(option = "D", direction = -1) +
+  labs(
+    x = NULL,
+    y = "Percent",
+    title = "Daily cannabis use is not just a young-adult pattern",
+    subtitle = "Among people who used cannabis in the past year"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.x = element_blank())
+
+ggplotly(web_p2_base, tooltip = "text") |>
+  config(displayModeBar = FALSE)
+```
+
+Roughly one in four past-year cannabis users in every age group reported daily or almost-daily use. The difference between the youngest and oldest users is much smaller than the difference in whether they used cannabis at all.
+
+## What changes most with age is combining cannabis with alcohol
+
+```{r}
+#| label: fig-web-overlap
+
+web_p3_base <- overlap_by_age |>
+  mutate(
+    tooltip = paste0(
+      "<b>Age ", age_group, "</b><br>",
+      "Overlapping alcohol + cannabis use: ", sprintf("%.1f%%", percent), "<br>",
+      "Past-year dual users, n = ", comma(n)
+    )
+  ) |>
+  ggplot(aes(
+    x = percent,
+    y = fct_rev(age_group),
+    text = tooltip
+  )) +
+  geom_segment(
+    aes(x = 0, xend = percent, yend = fct_rev(age_group)),
+    linewidth = 1
+  ) +
+  geom_point(aes(fill = percent), size = 5, shape = 21, show.legend = FALSE) +
+  geom_text(
+    aes(label = sprintf("%.0f%%", percent)),
+    hjust = -0.35,
+    size = 4
+  ) +
+  scale_x_continuous(
+    limits = c(0, 75),
+    labels = label_percent(scale = 1)
+  ) +
+  scale_fill_viridis_c(option = "B", direction = -1) +
+  labs(
+    x = "Percent",
+    y = NULL,
+    title = "Younger dual users are much more likely to combine the two",
+    subtitle = "Alcohol and cannabis used together or close enough for their effects to overlap"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.y = element_blank())
+
+ggplotly(web_p3_base, tooltip = "text") |>
+  config(displayModeBar = FALSE)
+```
+
+Among people who used both alcohol and cannabis in the past year, nearly 7 in 10 people aged 15–24 reported overlapping use. That proportion falls steadily with age and is closer to 3 in 10 among adults aged 65 and older. The broader story is therefore not simply that cannabis use declines with age. **Age differences are especially pronounced in whether cannabis is used at all and whether it is combined with alcohol, while daily use among cannabis users is comparatively similar across age groups.**
+
+# Data / Source Note
+
+The data come from Health Canada's **2025 Canadian Substance Use Survey (CSUS) Public Use Microdata File**, which includes respondents aged 15 years and older living in Canada's ten provinces. The public-use file contains 36,061 records. All percentages shown here use the survey weight `WGT_PUMF`.
+
+Age is based on `AGS_Q01P`. Past-year cannabis use is based on `CAN_Q03`. Daily or almost-daily cannabis use is based on `NV_CAN_Q05` and is calculated only among respondents who reported cannabis use in the past 12 months. Overlapping alcohol–cannabis use is based on `PSU_Q02_a` and is calculated only among respondents who used both substances in the past 12 months.
+
+The public-use guide identifies `-7` as a valid skip and `-8` as not stated. For population-level past-year cannabis prevalence, respondents with a valid skip on `CAN_Q03` are treated as non-users because that question is only asked of people who have ever used cannabis. `-8` responses are excluded. For conditional analyses, only respondents in the relevant question universe are included.
+
+The survey documentation recommends using bootstrap replicate weights to estimate sampling variance. Those replicate weights are supplied separately from the main public-use file and were not included with the data used here. Therefore, this assignment reports weighted point estimates but does not present confidence intervals or standard errors.
