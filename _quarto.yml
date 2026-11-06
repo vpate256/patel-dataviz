@@ -1,0 +1,12 @@
+
+project:
+  type: website
+  output-dir: docs
+  render:
+    - csus_DataViz.qmd
+  post-render:
+    - "cp docs/csus_DataViz.html docs/index.html"
+
+website:
+  title: "Cannabis Use Across Age Groups in Canada"
+  site-url: "https://vpate256.github.io/patel-dataviz/"
